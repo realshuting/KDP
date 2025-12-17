@@ -52,79 +52,48 @@ This feature enables real lookups for all Kyverno CEL libraries in CLI tests, al
 
 This feature enables real lookups for all Kyverno CEL libraries by introducing a `--lookup` flag that switches from fake context providers to real external interactions during CLI testing.
 
-## Proposed Solution
+## CLI Flags for Flexible Testing
 
-Add a new `--lookup` flag to the `kyverno test` command:
+Add new flags to the `kyverno test` command for different testing modes:
 
 ```bash
 # Test with fake/mocked data (current behavior)
 kyverno test .
 
-# Test with real lookups for all CEL libraries
+# Test with real lookups for non-resource CEL libraries
 kyverno test . --lookup
+
+# Test with real cluster resource lookups + other real lookups
+kyverno test . --lookup --cluster
 ```
 
-### Behavior Changes
+## Behavior Changes
 
 **Without `--lookup` flag (current behavior):**
 - All CEL library functions return mocked/static data
 - Resource lookups use context files or fake clients
-- HTTP calls return predefined responses
-- User library functions return mock user data
-- Image operations use cached/stored metadata
 
 **With `--lookup` flag (new behavior):**
-- **Resource Library**: `resource.Get()`, `resource.List()`, `resource.Post()` make real Kubernetes API calls
+- **Resource Library**: Uses context files with fake client by default
+  - Add `--cluster` flag to use real Kubernetes API instead
 - **HTTP Library**: `http.Get()`, `http.Post()` make real HTTP(S) requests to external endpoints
 - **User Library**: `parseServiceAccount()` and other user functions work with actual user context
 - **ImageData Library**: `image.GetMetadata()` fetches real metadata from OCI registries
 - **GlobalContext Library**: `globalContext.Get()` retrieves real global context data
 
-## Examples
+### Resource Library Options
 
-### Test Configuration Example
-```yaml
-# kyverno-test.yaml (unchanged - works with both fake and real lookups)
-apiVersion: cli.kyverno.io/v1alpha1
-kind: Test
-metadata:
-  name: policy-test
-policies:
-  - policy.yaml
-resources:
-  - pod.yaml
-results:
-  - policy: policy.yaml
-    rule: validate-resource
-    result: pass
-```
+**Option 1: Isolated Testing (default with --lookup)**
+- Load resource manifests from context files into fake Kubernetes client
+- Enables testing with controlled, predictable resource data
+- No cluster connection required
+- Example: `kyverno test . --lookup`
 
-### Policy Example Using CEL Libraries
-```yaml
-apiVersion: policies.kyverno.io/v1alpha1
-kind: ValidatingPolicy
-metadata:
-  name: comprehensive-validation
-spec:
-  variables:
-    - name: configMap
-      expression: 'resource.Get("v1", "configmaps", object.metadata.namespace, "app-config")'
-    - name: externalData
-      expression: 'http.Get("https://api.example.com/validate")'
-    - name: imageInfo
-      expression: 'image.GetMetadata(object.spec.containers[0].image)'
-  validations:
-    - expression: 'variables.configMap.data.enabled == "true"'
-    - expression: 'variables.externalData.status == "valid"'
-    - expression: 'variables.imageInfo.config.os == "linux"'
-```
-
-When run with `kyverno test . --lookup`, the policy will:
-- Make real `resource.Get()` calls to the Kubernetes API
-- Perform actual `http.Get()` requests to external services
-- Fetch real image metadata from OCI registries
-- Use actual user context for authentication functions
-- Access real global context data when available
+**Option 2: Real Cluster Testing (--lookup --cluster)**
+- Connect to actual Kubernetes API server
+- Perform real `resource.Get()`, `resource.List()`, `resource.Post()` calls
+- Requires cluster access and credentials
+- Example: `kyverno test . --lookup --cluster`
 
 ## Key Design Decisions
 
@@ -150,6 +119,12 @@ This feature is designed to be backward compatible with no breaking changes.
 
 # Drawbacks
 
+- **Dependency on External Systems**: HTTP, image, and cluster lookups become dependent on network connectivity and external service availability
+- **Performance Impact**: Real network calls are slower than fake context lookups, increasing test execution time
+- **Cost Implications**: External API calls could incur costs or rate limiting
+- **Flakiness**: Network issues or external service outages could cause intermittent test failures
+- **Authentication Complexity**: Real cluster access requires proper kubeconfig and credentials
+- **Test Isolation**: Real cluster testing (--lookup --cluster) may interfere with other cluster resources
 
 # Alternatives
 
