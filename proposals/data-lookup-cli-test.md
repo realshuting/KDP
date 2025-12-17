@@ -23,103 +23,108 @@
 # Overview
 [overview]: #overview
 
-This feature implements real lookup capabilities for the Kyverno CLI test command, enabling comprehensive testing of policy definitions that use CEL libraries for resource and HTTP(S) lookups. Currently, the CLI test command only supports static fake data through values.yaml files, limiting the ability to thoroughly test policies that perform dynamic lookups against Kubernetes API server or external HTTP(S) endpoints. This enhancement will allow users to test policy behavior against real cluster state and external services, ensuring policies work correctly in production environments.
+This feature enables real lookups for all Kyverno CEL libraries in CLI tests, allowing policies to interact with actual external systems instead of mocked data. Currently, the CLI test command uses fake context providers that return static data, preventing comprehensive testing of policies that use CEL libraries for dynamic lookups against Kubernetes APIs, HTTP endpoints, registries, and other external services. This enhancement introduces a `--lookup` flag that enables real interactions across all CEL libraries during testing.
 
 # Definitions
 [definitions]: #definitions
 
 - **CLI Test Command**: The `kyverno test` command that validates policies against test cases without requiring a running cluster
-- **Values.yaml**: Configuration files containing static test data that is currently used to mock external dependencies
-- **CEL Libraries**: Common Expression Language (CEL) extensions that provide [additional functions](https://kyverno.io/docs/policy-types/cel-libraries/) for Kyverno policies, including resource lookups and HTTP(S) requests
-- **Real Lookup**: Dynamic data retrieval from actual sources (Kubernetes API server, external HTTP(S) endpoints) during policy evaluation
+- **CEL Libraries**: Common Expression Language (CEL) extensions that provide [additional functions](https://kyverno.io/docs/policy-types/cel-libraries/) for Kyverno policies, including resource, HTTP, user, image, imageData, and globalContext libraries
+- **Fake Context Provider**: A testing implementation that provides static, predefined data instead of making real external calls
+- **Real Lookup**: Dynamic data retrieval from actual external systems (Kubernetes API, HTTP endpoints, registries, etc.) during policy evaluation
 
 # Motivation
 [motivation]: #motivation
 
-- **Why should we do this?** Currently, the CLI test command uses a fake context provider that only supports static data from values.yaml files. This severely limits the ability to test policies that use CEL libraries for dynamic lookups, as users cannot validate that URLs are correct, API calls work properly, or that policies behave correctly with real cluster state. This creates a gap between testing and production environments.
+- **Why should we do this?** The CLI test command currently uses fake context providers that return static, mocked data for all CEL library operations. This prevents comprehensive testing of policies that depend on real external systems, creating a significant gap between test and production environments where policies may behave differently with actual data sources.
 
 - **What use cases does it support?**
-  - Testing policies that validate resource existence or properties via [resource](https://kyverno.io/docs/policy-types/cel-libraries/#resource-library) library calls
-  - Validating HTTP(S) endpoint availability and response handling in policies using [http](https://kyverno.io/docs/policy-types/cel-libraries/#http-library) library
-  - Ensuring policies work correctly with real cluster state rather than mocked data
-  - Comprehensive testing of policy logic that depends on external data sources
-  - CI/CD pipelines that need to validate policy behavior against actual infrastructure
+  - Testing policies that query Kubernetes APIs via the [resource library](https://kyverno.io/docs/policy-types/cel-libraries/#resource-library)
+  - Validating HTTP(S) endpoint responses using the [HTTP library](https://kyverno.io/docs/policy-types/cel-libraries/#http-library)
+  - Testing user authentication logic with the [user library](https://kyverno.io/docs/policy-types/cel-libraries/#user-library)
+  - Validating image metadata from real registries using the [imageData library](https://kyverno.io/docs/policy-types/cel-libraries/#imagedata-library)
+  - Testing policies with real global context data via the [globalContext library](https://kyverno.io/docs/policy-types/cel-libraries/#globalcontext-library)
+  - CI/CD pipelines that need to validate complete policy behavior against actual infrastructure
 
-- **What is the expected outcome?** Users will be able to run `kyverno test` commands that perform real API calls and HTTP(S) requests, providing confidence that policies will work correctly in production. This enables thorough testing of policy definitions before deployment, reducing the risk of policy failures in live environments.
+- **What is the expected outcome?** Users will be able to run `kyverno test --lookup` to enable real interactions across all CEL libraries, providing confidence that policies work correctly with actual external systems and data sources.
 
 # Proposal
 
-This feature introduces a new CLI flag `--lookup` to the `kyverno test` command that enables real HTTP(S) requests for HTTP lookups while providing isolated testing for resource lookups. The test command will:
+This feature enables real lookups for all Kyverno CEL libraries by introducing a `--lookup` flag that switches from fake context providers to real external interactions during CLI testing.
 
-1. **For Resource Lookups**: Load resource manifests from `contextResources` directories/files into a Kubernetes fake client for controlled testing
-2. **For HTTP(S) Lookups**: Make real HTTP(S) requests to external endpoints for HTTP operations
-3. **Maintain Backward Compatibility**: When the flag is not provided, behavior remains unchanged (fake context)
+## Proposed Solution
 
-## Examples
+Add a new `--lookup` flag to the `kyverno test` command:
 
-### Proposed Behavior (Real Lookups)
 ```bash
-# Test with real HTTP(S) and Kubernetes resource lookups
+# Test with fake/mocked data (current behavior)
+kyverno test .
+
+# Test with real lookups for all CEL libraries
 kyverno test . --lookup
 ```
 
-### Policy Example Using Real Lookups
-```yaml
-apiVersion: policies.kyverno.io/v1alpha1
-kind: ValidatingPolicy
-metadata:
-  name: restrict-image-registries
-spec:
-  validationActions:
-    - Deny
-  evaluation:
-    background:
-      enabled: false
-  matchConstraints:
-    resourceRules:
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["pods"]
-  variables:
-    - name: allContainers
-      expression: >-
-        object.spec.containers 
-        + object.spec.?initContainers.orValue([]) 
-        + object.spec.?ephemeralContainers.orValue([])
-    - name: cm
-      expression: >-
-        resource.Get("v1", "configmaps", "kube-system", "allowed-registry")
-    - name: allowedRegistry
-      expression: "variables.cm.data[?'registry'].orValue('')"
-  validations:
-    - expression: "variables.allContainers.all(c, c.image.startsWith(variables.allowedRegistry))"
-      messageExpression: '"image must be from registry: " + string(variables.allowedRegistry)'
-```
+### Behavior Changes
 
-### Test Configuration for Resource Lookups
+**Without `--lookup` flag (current behavior):**
+- All CEL library functions return mocked/static data
+- Resource lookups use context files or fake clients
+- HTTP calls return predefined responses
+- User library functions return mock user data
+- Image operations use cached/stored metadata
+
+**With `--lookup` flag (new behavior):**
+- **Resource Library**: `resource.Get()`, `resource.List()`, `resource.Post()` make real Kubernetes API calls
+- **HTTP Library**: `http.Get()`, `http.Post()` make real HTTP(S) requests to external endpoints
+- **User Library**: `parseServiceAccount()` and other user functions work with actual user context
+- **ImageData Library**: `image.GetMetadata()` fetches real metadata from OCI registries
+- **GlobalContext Library**: `globalContext.Get()` retrieves real global context data
+
+## Examples
+
+### Test Configuration Example
 ```yaml
-# kyverno-test.yaml - Isolated testing with context resources
-apiVersion: cli.kyverno.io/v1alpha2
+# kyverno-test.yaml (unchanged - works with both fake and real lookups)
+apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: test-resource-lookup-isolated
+  name: policy-test
 policies:
   - policy.yaml
 resources:
   - pod.yaml
-contextResources:  # Directories/files containing resources for lookups
-  - mocks/configmaps.yaml  # Specific file with resources
 results:
   - policy: policy.yaml
-    rule: check-configmap-exists
+    rule: validate-resource
     result: pass
 ```
 
-When run with `kyverno test . --lookup`, this will:
-- Load all resources from `mocks/configmaps.yaml` into a fake client for isolated resource testing
-- Execute policy lookups against these static resources
-- Enable real HTTP(S) lookups for any HTTP operations in the policy
+### Policy Example Using CEL Libraries
+```yaml
+apiVersion: policies.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: comprehensive-validation
+spec:
+  variables:
+    - name: configMap
+      expression: 'resource.Get("v1", "configmaps", object.metadata.namespace, "app-config")'
+    - name: externalData
+      expression: 'http.Get("https://api.example.com/validate")'
+    - name: imageInfo
+      expression: 'image.GetMetadata(object.spec.containers[0].image)'
+  validations:
+    - expression: 'variables.configMap.data.enabled == "true"'
+    - expression: 'variables.externalData.status == "valid"'
+    - expression: 'variables.imageInfo.config.os == "linux"'
+```
+
+When run with `kyverno test . --lookup`, the policy will:
+- Make real `resource.Get()` calls to the Kubernetes API
+- Perform actual `http.Get()` requests to external services
+- Fetch real image metadata from OCI registries
+- Use actual user context for authentication functions
+- Access real global context data when available
 
 ## Key Design Decisions
 
@@ -130,36 +135,18 @@ When run with `kyverno test . --lookup`, this will:
 
 # Implementation
 
-## Schema Changes
-
-Add the `contextResources` field to the `Test` struct:
-
-```go
-type Test struct {
-    // ... existing fields ...
-
-    // ContextResources specifies directories/files containing resource manifests
-    // to be loaded into the fake client for isolated testing of resource lookups
-    ContextResources []string `json:"contextResources,omitempty"`
-
-    // ... existing fields ...
-}
-```
-
-## Implementation Logic
-
-When `--lookup` flag is used:
-- Load resources from `contextResources` paths into fake Kubernetes client
-- Enable real HTTP(S) client for HTTP library operations
-- All resource lookups use the fake client with loaded resources
-- All HTTP lookups use real network calls
-
 ## Link to the Implementation PR
 
 
 # Migration (OPTIONAL)
 
 This feature is designed to be backward compatible with no breaking changes.
+
+## Backward Compatibility
+
+- **No API Changes**: Existing test files work unchanged
+- **Opt-in Feature**: `--lookup` flag enables new behavior when desired
+- **Safe Defaults**: Fake context providers remain the default behavior
 
 # Drawbacks
 
@@ -172,9 +159,3 @@ This feature is designed to be backward compatible with no breaking changes.
 
 
 # CRD Changes (OPTIONAL)
-
-This KDP entails changes to the CLI test CRD to support resource lookups:
-
-- **Version Bump**: Bump API version from `cli.kyverno.io/v1alpha1` to `cli.kyverno.io/v1alpha2` due to addition of new field
-- **Test**: Add new `contextResources` field (`[]string`) to specify directories/files containing resource manifests for isolated testing
-- **Backward Compatibility**: The new field is optional, existing v1alpha1 test configurations remain valid
