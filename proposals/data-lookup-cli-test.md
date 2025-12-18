@@ -23,7 +23,7 @@
 # Overview
 [overview]: #overview
 
-This feature enables real lookups for all Kyverno CEL libraries in CLI tests, allowing policies to interact with actual external systems instead of mocked data. Currently, the CLI test command uses fake context providers that return static data, preventing comprehensive testing of policies that use CEL libraries for dynamic lookups against Kubernetes APIs, HTTP endpoints, registries, and other external services. This enhancement introduces a `--lookup` flag that enables real interactions across all CEL libraries during testing.
+This feature enables CLI testing of API server calls for all Kyverno CEL libraries, allowing policies to interact with a Kubernetes fake client that is populated with test data. Currently, the CLI test command uses variables that return static values, preventing comprehensive testing of policies that use CEL libraries for dynamic lookups against Kubernetes APIs.```
 
 # Definitions
 [definitions]: #definitions
